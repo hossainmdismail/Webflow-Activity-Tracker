@@ -1,0 +1,20 @@
+{
+  "name": "webflow-tracker",
+  "version": "1.0.0",
+  "description": "CLI tool that connects to the Webflow Data API v2 and reports unpublished changes and draft pages.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["webflow", "api", "cli", "cms", "publishing"],
+  "author": "",
+  "license": "MIT"
+}

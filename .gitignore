@@ -1,0 +1,8 @@
+# Dependencies
+node_modules/
+
+# Environment — NEVER commit secrets
+.env
+
+# Generated output (optional — you may want to commit this for CI artifacts)
+report.json
