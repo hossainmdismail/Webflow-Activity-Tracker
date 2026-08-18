@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Webflow Change Tracker Dashboard</title>
+  <meta name="description" content="Monitor unpublished changes and draft pages on your Webflow site in real time." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-wrapper">
+
+    <!-- ── Header ────────────────────────────────────────── -->
+    <header class="header">
+      <div class="header-brand">
+        <div class="header-logo">🔭</div>
+        <div>
+          <div class="header-title">Webflow Tracker</div>
+          <div class="header-subtitle">Change &amp; Publish Monitor</div>
+        </div>
+      </div>
+      <span class="header-badge">v2 API</span>
+    </header>
+
+    <!-- ── Step 1: Token ─────────────────────────────────── -->
+    <section class="setup-panel" id="panel-token">
+      <h2><span class="step-badge">1</span> Connect API Token</h2>
+      <div id="env-hint" class="env-hint hidden">
+        ✅ Token pre-loaded from <code>.env</code>
+      </div>
+      <div class="input-row" style="margin-top:12px;">
+        <div class="input-group">
+          <label for="input-token">Webflow API Token</label>
+          <input
+            id="input-token"
+            class="input-field"
+            type="password"
+            placeholder="Paste your Webflow workspace token…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <button class="btn btn-primary" id="btn-connect" onclick="connectToken()">
+          <span id="connect-spinner" class="spinner hidden"></span>
+          <span id="connect-label">Connect →</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ── Step 2: Site Selector ──────────────────────────── -->
+    <section class="setup-panel hidden" id="panel-site">
+      <h2><span class="step-badge">2</span> Select Site</h2>
+      <div class="input-row">
+        <div class="input-group">
+          <label for="select-site">Your Webflow Sites</label>
+          <select id="select-site" class="select-field">
+            <option value="">— Choose a site —</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="btn-run" onclick="runReport()">
+          <span id="run-spinner" class="spinner hidden"></span>
+          <span id="run-label">Run Report →</span>
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="resetToken()" style="align-self:flex-end;">
+          ← Back
+        </button>
+      </div>
+    </section>
+
+    <!-- ── Error banner ───────────────────────────────────── -->
+    <div id="error-banner" class="error-banner hidden">
+      <span style="font-size:20px;">⚠️</span>
+      <div>
+        <strong id="error-title">Error</strong>
+        <span id="error-msg"></span>
+      </div>
+    </div>
+
+    <!-- ── Dashboard ──────────────────────────────────────── -->
+    <main id="dashboard" class="hidden">
+
+      <!-- Site info -->
+      <div class="site-info-bar fade-in" id="site-info-bar">
+        <div>
+          <div class="site-name" id="info-site-name">—</div>
+          <div class="site-details" id="info-site-id"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="pulse-dot"></span>
+          <button class="btn btn-secondary btn-sm" onclick="runReport()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-grid fade-in" id="stats-grid">
+        <div class="stat-card">
+          <span class="stat-icon">📅</span>
+          <div class="stat-value" id="stat-published">—</div>
+          <div class="stat-label">Last Published</div>
+          <div class="stat-sub" id="stat-published-rel"></div>
+        </div>
+        <div class="stat-card amber">
+          <span class="stat-icon">⚠️</span>
+          <div class="stat-value" id="stat-pending">—</div>
+          <div class="stat-label">Pending Changes</div>
+          <div class="stat-sub" id="stat-pending-sub"></div>
+        </div>
+        <div class="stat-card purple">
+          <span class="stat-icon">📝</span>
+          <div class="stat-value" id="stat-drafts">—</div>
+          <div class="stat-label">Draft Pages</div>
+          <div class="stat-sub">Will not go live on publish</div>
+        </div>
+        <div class="stat-card green">
+          <span class="stat-icon">✅</span>
+          <div class="stat-value" id="stat-clean">—</div>
+          <div class="stat-label">Clean Pages</div>
+          <div class="stat-sub" id="stat-total-sub"></div>
+        </div>
+      </div>
+
+      <!-- Report meta -->
+      <div class="report-meta fade-in" id="report-meta">
+        <span>🕐 Report generated: <strong id="meta-generated">—</strong></span>
+        <span>📄 Total pages scanned: <strong id="meta-total">—</strong></span>
+        <span>🗄️ Archived (skipped): <strong id="meta-archived">—</strong></span>
+      </div>
+
+      <!-- Pending Changes Section -->
+      <section class="section fade-in" id="section-pending">
+        <div class="section-header">
+          <div class="section-title">
+            ⚠️ Unpublished Changes
+            <span class="badge badge-amber" id="badge-pending">0</span>
+          </div>
+        </div>
+        <div class="page-list" id="list-pending"></div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- Draft Pages Section -->
+      <section class="section fade-in" id="section-drafts">
+        <div class="section-header">
+          <div class="section-title">
+            📝 Draft Pages
+            <span class="badge badge-purple" id="badge-drafts">0</span>
+          </div>
+        </div>
+        <div class="page-list" id="list-drafts"></div>
+      </section>
+
+    </main>
+
+  </div>
+
+  <!-- ── Toast container ────────────────────────────────── -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

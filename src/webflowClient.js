@@ -81,6 +81,19 @@ async function apiFetch(url, token) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Fetches all sites accessible with the given token.
+ * Used by the dashboard to auto-populate the site selector.
+ *
+ * @param {string} token - Webflow API bearer token
+ * @returns {Promise<Array>} - Array of site objects
+ */
+export async function getSites(token) {
+  const url = `${WEBFLOW_BASE_URL}/sites`;
+  const data = await apiFetch(url, token);
+  return data.sites ?? [];
+}
+
+/**
  * Fetches the site object for a given site ID.
  * Relevant fields returned by Webflow: id, displayName, shortName,
  * lastPublished, previewUrl, timeZone, ...
