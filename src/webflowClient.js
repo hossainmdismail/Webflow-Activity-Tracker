@@ -144,3 +144,33 @@ export async function getAllPages(siteId, token) {
 
   return allPages;
 }
+
+/**
+ * Fetches the full detail object for a single page.
+ * @param {string} pageId  - Webflow page ID
+ * @param {string} token   - Webflow API bearer token
+ * @returns {Promise<object>} - Full page object
+ */
+export async function getPage(pageId, token) {
+  const url = `${WEBFLOW_BASE_URL}/pages/${pageId}`;
+  return apiFetch(url, token);
+}
+
+/**
+ * Fetches the current (unpublished/draft) DOM content of a page.
+ * @param {string} pageId  - Webflow page ID
+ * @param {string} token   - Webflow API bearer token
+ * @param {string} [localeId] - optional locale
+ * @returns {Promise<object|null>}
+ */
+export async function getPageDom(pageId, token, localeId) {
+  const params = new URLSearchParams({ limit: "100" });
+  if (localeId) params.set("localeId", localeId);
+  const url = `${WEBFLOW_BASE_URL}/pages/${pageId}/dom?${params}`;
+  try {
+    return await apiFetch(url, token);
+  } catch {
+    return null;
+  }
+}
+
