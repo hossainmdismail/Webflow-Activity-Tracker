@@ -125,6 +125,7 @@ export function buildReport(site, pages) {
         lastUpdated: page.lastUpdated,
         draft: false,
         publishedPath: page.publishedPath ?? null,
+        insights: page.insights ?? null,
       });
     }
   }
@@ -191,6 +192,12 @@ function buildConsoleSummary(report, lastPublished) {
       lines.push(`       • ${path}`);
       lines.push(`           Title     : ${page.title}`);
       lines.push(`           Edited    : ${when} (${rel})`);
+      if (page.insights && page.insights.length > 0) {
+        lines.push(`           Inside Changes:`);
+        for (const ins of page.insights) {
+          lines.push(`             • ${ins}`);
+        }
+      }
     }
   }
 

@@ -359,15 +359,16 @@ function renderModal(data) {
     hide('modal-live-warn');
   }
 
-  const changedCount = changes.filter(c => c.changed === true).length;
-  const totalComparable = changes.filter(c => c.changed !== null).length;
-  setText('modal-change-badge',
-    liveFetchOk
-      ? `${changedCount} of ${totalComparable} fields changed`
-      : 'Metadata only (no live diff)'
-  );
-
-  $('modal-diff').innerHTML = changes.map(field => renderDiffField(field, liveFetchOk)).join('');
+  const changedFields = changes.filter(field => field.changed === true);
+  
+  if (changedFields.length === 0) {
+    $('modal-diff').innerHTML = `
+      <div class="diff-field unchanged" style="padding:14px;background:rgba(52,211,153,0.06);border-color:rgba(52,211,153,0.2);color:var(--accent-green);font-size:13px;display:flex;align-items:center;gap:8px;">
+        <span>✅</span> <strong>Metadata Unchanged:</strong> SEO Title, SEO Description, OG fields, and Page Title match the live published state.
+      </div>`;
+  } else {
+    $('modal-diff').innerHTML = changedFields.map(field => renderDiffField(field, liveFetchOk)).join('');
+  }
 
   hide('modal-loading');
   show('modal-body');
@@ -383,7 +384,7 @@ function renderContentSection(data) {
 
   const badge = $('modal-dom-badge');
   if (domApiAvailable && badge) {
-    setText('modal-dom-badge', 'Before vs After (DOM API)');
+    setText('modal-dom-badge', 'Only Changed Content (DOM API)');
     badge.style.cssText = 'background:rgba(52,211,153,.12);color:#34d399;padding:3px 9px;border-radius:100px;border:1px solid rgba(52,211,153,.25)';
     hide('modal-dom-unavail');
   } else if (liveContent && badge) {
@@ -398,43 +399,197 @@ function renderContentSection(data) {
   const container = $('modal-content-diff');
   const parts = [];
 
+  // Headings — show ONLY changed headings
   if (liveContent?.headings?.length > 0 || currentContent?.headings?.length > 0) {
-    parts.push(renderContentGroup('📐 Headings Structure',
-      liveContent?.headings ?? [], currentContent?.headings ?? null, domApiAvailable, renderHeadingsBlock));
+    const aligned = renderOnlyChangedHeadings(liveContent?.headings ?? [], currentContent?.headings ?? [], domApiAvailable);
+    if (aligned.hasChanges) {
+      parts.push(`
+        <div class="content-group">
+          <div class="content-group-header">📐 Changed Headings</div>
+          ${domApiAvailable
+            ? `<div class="content-compare-grid">
+                 <div class="content-col before"><div class="content-col-header">Published</div><div class="content-col-body" style="padding:0">${aligned.beforeHtml}</div></div>
+                 <div class="content-col after"><div class="content-col-header">Current</div><div class="content-col-body" style="padding:0">${aligned.afterHtml}</div></div>
+               </div>`
+            : aligned.beforeHtml}
+        </div>`);
+    } else {
+      parts.push(`
+        <div class="content-group" style="padding:12px 14px;background:rgba(52,211,153,0.04);color:var(--accent-green);font-size:12px;">
+          ✅ <strong>Headings Unchanged:</strong> All heading structure and text match published state.
+        </div>`);
+    }
   }
 
+  // Paragraphs — show ONLY changed paragraphs
   if (liveContent?.paragraphs?.length > 0 || currentContent?.paragraphs?.length > 0) {
-    parts.push(renderContentGroup('📝 Paragraph Text',
-      liveContent?.paragraphs ?? [], currentContent?.paragraphs ?? null, domApiAvailable, renderParasBlock));
-  }
-
-  if (liveContent?.images?.length > 0) {
-    const bHtml = renderImagesBlock(liveContent.images);
-    const aHtml = currentContent?.images ? renderImagesBlock(currentContent.images) : null;
-    parts.push(`
-      <div class="content-group">
-        <div class="content-group-header">🖼 Images found on page</div>
-        ${domApiAvailable && aHtml
-          ? `<div class="content-compare-grid">
-               <div class="content-col before"><div class="content-col-header">Published</div><div class="content-col-body">${bHtml}</div></div>
-               <div class="content-col after"><div class="content-col-header">Current</div><div class="content-col-body">${aHtml}</div></div>
-             </div>`
-          : bHtml}
-      </div>`);
-  }
-
-  if (liveContent?.ctas?.length > 0) {
-    const ctaTags = liveContent.ctas.map(c => `<span class="cta-tag">${escHtml(c)}</span>`).join('');
-    parts.push(`
-      <div class="content-group">
-        <div class="content-group-header">🔗 Buttons &amp; Links</div>
-        <div class="cta-list">${ctaTags}</div>
-      </div>`);
+    const pDiff = renderOnlyChangedParas(liveContent?.paragraphs ?? [], currentContent?.paragraphs ?? [], domApiAvailable);
+    if (pDiff.hasChanges) {
+      parts.push(`
+        <div class="content-group">
+          <div class="content-group-header">📝 Changed Paragraphs</div>
+          ${domApiAvailable
+            ? `<div class="content-compare-grid">
+                 <div class="content-col before"><div class="content-col-header">Published</div><div class="content-col-body" style="padding:0">${pDiff.beforeHtml}</div></div>
+                 <div class="content-col after"><div class="content-col-header">Current</div><div class="content-col-body" style="padding:0">${pDiff.afterHtml}</div></div>
+               </div>`
+            : pDiff.beforeHtml}
+        </div>`);
+    } else {
+      parts.push(`
+        <div class="content-group" style="padding:12px 14px;background:rgba(52,211,153,0.04);color:var(--accent-green);font-size:12px;">
+          ✅ <strong>Paragraph Text Unchanged:</strong> All body paragraphs match published state.
+        </div>`);
+    }
   }
 
   container.innerHTML = parts.length > 0
     ? parts.join('')
     : `<div class="modal-live-warn">No extractable content found on this page.</div>`;
+}
+
+/** Normalize string whitespace (collapses multiple spaces/newlines to single space) */
+function normStr(str) {
+  return String(str ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Renders ONLY changed headings (filters out identical headings AND unmatched CMS collection items).
+ */
+function renderOnlyChangedHeadings(publishedHeadings, currentHeadings, showDiff) {
+  const pubList = publishedHeadings ?? [];
+  const curList = currentHeadings ?? [];
+
+  if (!showDiff || curList.length === 0) {
+    return { beforeHtml: '', afterHtml: '', hasChanges: false };
+  }
+
+  const paired = [];
+  const usedCurIndices = new Set();
+
+  for (let i = 0; i < pubList.length; i++) {
+    const pub = pubList[i];
+    let bestMatchIdx = -1;
+    let bestScore = -1;
+
+    for (let j = 0; j < curList.length; j++) {
+      if (usedCurIndices.has(j)) continue;
+      const cur = curList[j];
+
+      const score = calcSimilarity(normStr(pub.text), normStr(cur.text));
+      const levelBonus = (pub.level === cur.level) ? 0.2 : 0;
+      const totalScore = score + levelBonus;
+
+      if (totalScore > bestScore && totalScore >= 0.30) {
+        bestScore = totalScore;
+        bestMatchIdx = j;
+      }
+    }
+
+    if (bestMatchIdx !== -1) {
+      usedCurIndices.add(bestMatchIdx);
+      paired.push({ pub, cur: curList[bestMatchIdx] });
+    }
+  }
+
+  // Filter ONLY pairs where BOTH exist and text/level actually changed (ignores CMS false-removals)
+  const changedPairs = paired.filter(pair => {
+    const { pub, cur } = pair;
+    if (!pub || !cur) return false; // Ignore unmatched CMS collection items
+    return normStr(pub.text) !== normStr(cur.text) || pub.level !== cur.level;
+  });
+
+  if (changedPairs.length === 0) {
+    return { beforeHtml: '', afterHtml: '', hasChanges: false };
+  }
+
+  const beforeCols = [];
+  const afterCols  = [];
+
+  for (const pair of changedPairs) {
+    const { pub, cur } = pair;
+    const { beforeHtml, afterHtml } = wordDiff(normStr(pub.text), normStr(cur.text));
+    const pLvl = pub.level.toLowerCase();
+    const cLvl = cur.level.toLowerCase();
+    beforeCols.push(`<div class="heading-item"><span class="heading-level ${pLvl}">${escHtml(pub.level)}</span><span class="heading-text">${beforeHtml}</span></div>`);
+    afterCols.push(`<div class="heading-item"><span class="heading-level ${cLvl}">${escHtml(cur.level)}</span><span class="heading-text">${afterHtml}</span></div>`);
+  }
+
+  return { beforeHtml: beforeCols.join(''), afterHtml: afterCols.join(''), hasChanges: true };
+}
+
+/**
+ * Renders ONLY changed paragraphs (filters out identical paragraphs AND CMS false-removals).
+ */
+function renderOnlyChangedParas(publishedParas, currentParas, showDiff) {
+  const pubList = publishedParas ?? [];
+  const curList = currentParas ?? [];
+
+  if (!showDiff || curList.length === 0) {
+    return { beforeHtml: '', afterHtml: '', hasChanges: false };
+  }
+
+  const paired = [];
+  const usedCurIndices = new Set();
+
+  for (let i = 0; i < pubList.length; i++) {
+    const pub = pubList[i];
+    let bestMatchIdx = -1;
+    let bestScore = -1;
+
+    for (let j = 0; j < curList.length; j++) {
+      if (usedCurIndices.has(j)) continue;
+      const cur = curList[j];
+      const score = calcSimilarity(normStr(pub), normStr(cur));
+      if (score > bestScore && score >= 0.30) {
+        bestScore = score;
+        bestMatchIdx = j;
+      }
+    }
+
+    if (bestMatchIdx !== -1) {
+      usedCurIndices.add(bestMatchIdx);
+      paired.push({ pub, cur: curList[bestMatchIdx] });
+    }
+  }
+
+  // Filter ONLY pairs where BOTH exist and text actually changed (ignoring whitespace & CMS noise)
+  const changedPairs = paired.filter(pair => {
+    const { pub, cur } = pair;
+    if (!pub || !cur) return false;
+    return normStr(pub) !== normStr(cur);
+  });
+
+  if (changedPairs.length === 0) {
+    return { beforeHtml: '', afterHtml: '', hasChanges: false };
+  }
+
+  const beforeCols = [];
+  const afterCols  = [];
+
+  for (const pair of changedPairs) {
+    const { pub, cur } = pair;
+    const { beforeHtml, afterHtml } = wordDiff(normStr(pub), normStr(cur));
+    beforeCols.push(`<div class="para-item">${beforeHtml}</div>`);
+    afterCols.push(`<div class="para-item">${afterHtml}</div>`);
+  }
+
+  return { beforeHtml: beforeCols.join(''), afterHtml: afterCols.join(''), hasChanges: true };
+}
+
+
+
+function calcSimilarity(s1, s2) {
+  if (!s1 || !s2) return 0;
+  const w1 = s1.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+  const w2 = s2.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+  if (w1.length === 0 || w2.length === 0) return 0;
+  const set2 = new Set(w2);
+  let matches = 0;
+  for (const w of w1) {
+    if (set2.has(w)) matches++;
+  }
+  return (2.0 * matches) / (w1.length + w2.length);
 }
 
 function renderContentGroup(title, beforeItems, afterItems, showDiff, renderFn) {
@@ -452,23 +607,6 @@ function renderContentGroup(title, beforeItems, afterItems, showDiff, renderFn) 
     </div>`;
 }
 
-function renderHeadingsBlock(headings, other, applyDiff, isBefore) {
-  if (!headings || headings.length === 0)
-    return `<div class="para-item" style="color:var(--text-muted);font-style:italic;">No headings found</div>`;
-  return headings.map((h, i) => {
-    let html = escHtml(h.text);
-    if (applyDiff && other && other[i]) {
-      const d = wordDiff(h.text, other[i].text);
-      html = isBefore ? d.beforeHtml : d.afterHtml;
-    }
-    const lvl = h.level.toLowerCase();
-    return `<div class="heading-item">
-      <span class="heading-level ${lvl}">${escHtml(h.level)}</span>
-      <span class="heading-text">${html}</span>
-    </div>`;
-  }).join('');
-}
-
 function renderParasBlock(paras, other, applyDiff, isBefore) {
   if (!paras || paras.length === 0)
     return `<div class="para-item" style="color:var(--text-muted);font-style:italic;">No paragraphs found</div>`;
@@ -481,6 +619,7 @@ function renderParasBlock(paras, other, applyDiff, isBefore) {
     return `<div class="para-item">${html}</div>`;
   }).join('');
 }
+
 
 function renderImagesBlock(images) {
   if (!images || images.length === 0) return `<div class="para-item" style="color:var(--text-muted);font-style:italic;">No images</div>`;

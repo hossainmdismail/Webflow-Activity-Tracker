@@ -23,8 +23,8 @@ const require = createRequire(import.meta.url);
 const dotenv = require("dotenv");
 dotenv.config();
 
-import { getSite, getAllPages } from "./src/webflowClient.js";
-import { buildReport } from "./src/report.js";
+import { getSite, getAllPages, getPage, getPageDom } from "./src/webflowClient.js";
+import { buildReport, formatDate } from "./src/report.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -38,10 +38,6 @@ const REPORT_PATH = path.join(__dirname, "report.json");
 // Environment validation
 // ---------------------------------------------------------------------------
 
-/**
- * Validates that required environment variables are set.
- * Exits the process with a helpful message if they are missing.
- */
 function validateEnv() {
   const missing = [];
 
@@ -63,6 +59,109 @@ function validateEnv() {
 }
 
 // ---------------------------------------------------------------------------
+// Inside change extraction helpers for CLI
+// ---------------------------------------------------------------------------
+
+function normStr(str) {
+  return String(str ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function decodeHtml(str) {
+  return (str ?? '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+function extractHeadingsFromLiveHtml(html) {
+  let clean = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<header[\s\S]*?<\/header>/gi, "")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, "")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+    .replace(/<div[^>]*class=["'][^"']*(?:footer|cart|nav|menu)[^"']*["'][\s\S]*?<\/div>/gi, "");
+
+  const headings = [];
+  const hRe = /<(h[1-4])[^>]*>([\s\S]*?)<\/\1>/gi;
+  let m;
+  while ((m = hRe.exec(clean)) !== null) {
+    const text = normStr(decodeHtml(m[2].replace(/<[^>]+>/g, "")));
+    if (text && text.length < 300) headings.push({ level: m[1].toUpperCase(), text });
+  }
+  return headings;
+}
+
+function extractHeadingsFromDomNodes(nodes) {
+  const headings = [];
+  if (!Array.isArray(nodes)) return headings;
+  for (const node of nodes) {
+    if (node.type === "text" && node.text) {
+      const html = node.text.html || "";
+      const rawText = normStr(node.text.text);
+      const hMatch = html.match(/<(h[1-4])[^>]*>([\s\S]*?)<\/\1>/i);
+      if (hMatch) {
+        const text = normStr(decodeHtml(hMatch[2].replace(/<[^>]+>/g, "") || rawText));
+        if (text) headings.push({ level: hMatch[1].toUpperCase(), text });
+      }
+    }
+  }
+  return headings;
+}
+
+async function fetchPageInsights(page, site, token) {
+  const insights = [];
+  try {
+    const fullPage = await getPage(page.id, token);
+    const customDomains = site.customDomains ?? [];
+    const baseUrl = customDomains.length > 0
+      ? `https://${customDomains[0].url}`
+      : `https://${site.shortName}.webflow.io`;
+    const liveUrl = `${baseUrl.replace(/\/$/, "")}${fullPage.publishedPath ?? "/" + fullPage.slug}`;
+
+    let liveHtml = "";
+    try {
+      const res = await fetch(liveUrl, {
+        headers: { "User-Agent": "WebflowTracker/1.0" },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (res.ok) liveHtml = await res.text();
+    } catch {}
+
+    const domData = await getPageDom(page.id, token, fullPage.localeId);
+    const domNodes = domData?.nodes ?? domData?.dom ?? [];
+
+    if (liveHtml && domNodes.length > 0) {
+      const liveHeadings = extractHeadingsFromLiveHtml(liveHtml);
+      const domHeadings  = extractHeadingsFromDomNodes(domNodes);
+
+      for (const pubH of liveHeadings) {
+        for (const curH of domHeadings) {
+          if (pubH.level === curH.level && normStr(pubH.text) !== normStr(curH.text)) {
+            const w1 = normStr(pubH.text).toLowerCase().split(/\s+/);
+            const w2 = normStr(curH.text).toLowerCase().split(/\s+/);
+            const set2 = new Set(w2);
+            let matches = 0;
+            for (const w of w1) if (set2.has(w)) matches++;
+            if (matches > 0 || w1[0] === w2[0]) {
+              insights.push(`📐 Heading (${pubH.level}): "${pubH.text}" ➔ "${curH.text}"`);
+            }
+          }
+        }
+      }
+    }
+
+    if (insights.length === 0) {
+      insights.push(`✨ Page content updated in Webflow Designer`);
+    }
+  } catch {}
+  return insights;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -74,7 +173,6 @@ async function main() {
 
   console.log(`\n🔍  Fetching data from Webflow API for site: ${siteId} …`);
 
-  // Step 1: Fetch site metadata.
   let site;
   try {
     site = await getSite(siteId, token);
@@ -83,7 +181,6 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 2: Fetch all pages (with automatic pagination).
   let pages;
   try {
     pages = await getAllPages(siteId, token);
@@ -96,22 +193,33 @@ async function main() {
     `✅  Retrieved site info + ${pages.length} page${pages.length === 1 ? "" : "s"}.`
   );
 
-  // Step 3: Build the report.
+  const { report: initialReport } = buildReport(site, pages);
+
+  if (initialReport.pendingChanges.length > 0) {
+    console.log(`🔍  Inspecting inside changes for ${initialReport.pendingChanges.length} pending page(s)…`);
+    for (const p of initialReport.pendingChanges) {
+      const pageObj = pages.find(item => item.id === p.id);
+      if (pageObj) {
+        pageObj.insights = await fetchPageInsights(p, site, token);
+      }
+    }
+  }
+
   const { report, summary } = buildReport(site, pages);
 
-  // Step 4: Print the human-readable console summary.
+  // Print console summary
   console.log(summary);
 
-  // Step 5: Write the JSON report file.
+  // Write JSON report
   try {
     await fs.writeFile(REPORT_PATH, JSON.stringify(report, null, 2), "utf-8");
     console.log(`📄  JSON report saved to: ${REPORT_PATH}\n`);
   } catch (err) {
     console.error(
-      `\n⚠️   Could not write report.json: ${err.message}\n` +
-        "     (The console output above is still valid.)\n"
+      `\n⚠️   Could not write report.json: ${err.message}\n`
     );
   }
 }
 
 main();
+

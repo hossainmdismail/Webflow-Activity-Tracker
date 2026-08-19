@@ -183,12 +183,28 @@ app.post("/api/page-compare", async (req, res) => {
       return m ? decodeHtmlEntities(m[1].trim()) : null;
     };
 
+    // Clean site title suffix from live <title> tag for Page Title comparison
+    const rawLiveTitle = extractTitle();
+    let baseLivePageTitle = page.title;
+    if (rawLiveTitle) {
+      if (rawLiveTitle.toLowerCase().startsWith(page.title.toLowerCase())) {
+        baseLivePageTitle = page.title;
+      } else {
+        baseLivePageTitle = rawLiveTitle.split(/\s+[-|–—]\s+/)[0].trim();
+      }
+    }
+
+    const beforeSeoTitle = extractMeta("title") || rawLiveTitle;
+    const beforeOgTitle  = extractOg("og:title") || beforeSeoTitle;
+    const beforeSeoDesc  = extractMeta("description");
+    const beforeOgDesc   = extractOg("og:description") || beforeSeoDesc;
+
     const before = liveFetchOk ? {
-      pageTitle:      extractTitle(),
-      seoTitle:       extractMeta("title"),
-      seoDescription: extractMeta("description"),
-      ogTitle:        extractOg("og:title"),
-      ogDescription:  extractOg("og:description"),
+      pageTitle:      baseLivePageTitle,
+      seoTitle:       beforeSeoTitle,
+      seoDescription: beforeSeoDesc,
+      ogTitle:        beforeOgTitle,
+      ogDescription:  beforeOgDesc,
     } : null;
 
     const currentSeoTitle = page.seo?.title ?? null;
@@ -264,10 +280,15 @@ function decodeHtmlEntities(str) {
 }
 
 function extractLiveContent(html) {
-  const clean = html
+  let clean = html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, "");
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
+    .replace(/<header[\s\S]*?<\/header>/gi, "")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, "")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+    .replace(/<div[^>]*class=["'][^"']*w-commerce-[^"']*["'][\s\S]*?<\/div>/gi, "")
+    .replace(/<div[^>]*class=["'][^"']*(?:footer|cart|nav|menu)[^"']*["'][\s\S]*?<\/div>/gi, "");
 
   const headings = [];
   const hRe = /<(h[1-4])[^>]*>([\s\S]*?)<\/\1>/gi;
@@ -305,34 +326,48 @@ function extractLiveContent(html) {
   return { headings, paragraphs, images, ctas };
 }
 
-function extractDomContent(nodes, result) {
-  result = result ?? { headings: [], paragraphs: [], images: [], ctas: [] };
+function extractDomContent(nodes) {
+  const result = { headings: [], paragraphs: [], images: [], ctas: [] };
   if (!Array.isArray(nodes)) return result;
 
   for (const node of nodes) {
-    const tag = (node.tag ?? node.type ?? "").toLowerCase();
+    if (node.type === "text" && node.text) {
+      const html = node.text.html || "";
+      const rawText = (node.text.text || "").trim();
 
-    if (["h1","h2","h3","h4"].includes(tag) && result.headings.length < 20) {
-      const text = collectTextFromNode(node);
-      if (text) result.headings.push({ level: tag.toUpperCase(), text });
-    } else if (tag === "p" && result.paragraphs.length < 8) {
-      const text = collectTextFromNode(node);
-      if (text && text.length > 20) result.paragraphs.push(text.substring(0, 400));
-    } else if (tag === "img" && result.images.length < 8) {
-      const attrs = node.attributes ?? node.attrs ?? {};
-      if (attrs.src && !attrs.src.startsWith("data:")) {
-        result.images.push({ src: attrs.src, alt: attrs.alt ?? "" });
+      const hMatch = html.match(/<(h[1-4])[^>]*>([\s\S]*?)<\/\1>/i);
+      if (hMatch) {
+        const level = hMatch[1].toUpperCase();
+        const text = decodeHtmlEntities(hMatch[2].replace(/<[^>]+>/g, "").trim() || rawText);
+        if (text) result.headings.push({ level, text });
+      } else if (html.match(/<p[^>]*>/i) || (rawText && rawText.length > 25 && !html.match(/<label|<button|<a/i))) {
+        const text = decodeHtmlEntities(rawText || html.replace(/<[^>]+>/g, "").trim());
+        if (text && text.length > 15 && !text.toLowerCase().includes("no items found")) {
+          result.paragraphs.push(text);
+        }
       }
-    } else if ((tag === "a" || tag === "button") && result.ctas.length < 6) {
-      const text = collectTextFromNode(node);
-      if (text && text.length > 2 && text.length < 80) result.ctas.push(text);
+    } else if (node.type === "image" && node.image) {
+      result.images.push({
+        src: node.image.assetId ? `https://assets-global.website-files.com/${node.image.assetId}` : "",
+        alt: node.image.alt === "__wf_reserved_inherit" ? "" : (node.image.alt || "")
+      });
+    } else if (node.type === "component-instance" && Array.isArray(node.propertyOverrides)) {
+      for (const override of node.propertyOverrides) {
+        if (override.text && override.text.text) {
+          const txt = override.text.text.trim();
+          if (txt && override.label && override.label.toLowerCase().includes("heading")) {
+            result.headings.push({ level: "H2", text: txt });
+          } else if (txt && txt.length > 15) {
+            result.paragraphs.push(txt);
+          }
+        }
+      }
     }
-
-    const children = node.children ?? node.nodes ?? node.childNodes ?? [];
-    if (children.length > 0) extractDomContent(children, result);
   }
+
   return result;
 }
+
 
 function collectTextFromNode(node) {
   if (node.type === "text" || node.nodeType === "text") return (node.text ?? node.data ?? "").trim();
